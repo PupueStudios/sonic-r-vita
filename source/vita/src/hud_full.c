@@ -54,6 +54,7 @@ extern void RenderEnvMappedModel3D(int xOff, int yOff, int zBase,
 extern void R_ClearDepth(void);
 extern void R_WideClipOn(int *cfg);
 extern void R_WideClipOff(int *cfg);
+extern int R_GetWideExtra(void);
 extern void R_RestoreFrameScissor(void);
 extern void RenderHiddenSubEntry(int worldX, int worldZ, int worldY);
 extern void DrawMinimapWidget(char *vpPlayer);
@@ -140,6 +141,46 @@ static const PickupShadowItem *s_pickupShadowTables[] = {
 /* Shared ground-shadow quad buffers — replaces BSS region 0x68102C-0x68120B.
  * 10 slots × 12 ints, stride 0x30. */
 int g_pickupShadowVerts[10 * 12];
+
+enum { HUD_LEFT = -1, HUD_CENTER = 0, HUD_RIGHT = 1 };
+
+static int s_hudWideExtra;
+static int s_hudAnchor;
+static int s_hudBaseClipDelta;
+static int s_hudLeftExpansion;
+static int s_hudRightExpansion;
+
+static void HUD_BeginWide(int *cfg, int extra)
+{
+    // ooghh..I'm SOOOO WIDEEE
+    s_hudWideExtra = extra;
+    s_hudAnchor = HUD_CENTER;
+    s_hudBaseClipDelta = extra ? cfg[0] - g_clipLeft : 0;
+    s_hudLeftExpansion = (extra && cfg[0] == 0) ? extra : 0;
+    s_hudRightExpansion = (extra && cfg[2] == g_screenWidth - 1) ? extra : 0;
+}
+
+static void HUD_DrawTexturedQuad(int x, int y, int depth, int w, int h,
+                                 int tpage, int u, int v, int uw, int vh,
+                                 unsigned int color)
+{
+    if (s_hudWideExtra && g_projScaleXCurrent > 0) {
+        int delta = s_hudBaseClipDelta;
+        if (s_hudAnchor == HUD_LEFT)
+            delta -= s_hudLeftExpansion;
+        else if (s_hudAnchor == HUD_RIGHT)
+            delta += s_hudRightExpansion;
+        else
+            delta += (s_hudRightExpansion - s_hudLeftExpansion) / 2;
+        int numerator = delta * 512;
+        int divisor = g_projScaleXCurrent;
+        x += numerator >= 0 ? (numerator + divisor / 2) / divisor
+                            : (numerator - divisor / 2) / divisor;
+    }
+    DrawTexturedQuad(x, y, depth, w, h, tpage, u, v, uw, vh, color);
+}
+
+#define DrawTexturedQuad HUD_DrawTexturedQuad
 
 /**
  * DrawTimer — 0x004D1970 — 963 bytes
@@ -645,9 +686,15 @@ void RenderHUD(void)
 
         if (g_demoMode == DEMO_NONE) {
             int hudPlayerIdx = (g_isNetworkGame != 0) ? g_localPlayerIndex : (int)vp;
-            R_WideClipOff(g_viewportArray + vp * 21);
+            int *hudCfg = g_viewportArray + vp * 21;
+            int hudExtra = g_resolutionLevel == 4 ? R_GetWideExtra() : 0;
+            if (!hudExtra)
+                R_WideClipOff(hudCfg);
+            HUD_BeginWide(hudCfg, hudExtra);
             DrawTimerAndStatus(hudPlayerIdx);
-            R_WideClipOn(g_viewportArray + vp * 21);
+            HUD_BeginWide(hudCfg, 0);
+            if (!hudExtra)
+                R_WideClipOn(hudCfg);
         }
 
         /* Track draws before characters — matches old batch flush order.
@@ -1046,6 +1093,7 @@ void DrawTimerAndStatus(int vpIndex)
         if (g_numHumans == 2 && g_viewportIndex == 1) {           /* 0x4D2D82 */
             timerX = 0xC0;                                       /* 0x4D2D9B */
         }
+        s_hudAnchor = HUD_RIGHT;
         DrawTimer(timerX, 0x10, 0x41200000, totalTime, 1);
 
         /* Individual lap times — binary 0x4D2DF0: X = timerX + 0x20 */
@@ -1114,6 +1162,7 @@ void DrawTimerAndStatus(int vpIndex)
      *   0x4D303F: <big draw> at (0x10, ebx) 48x48, uv (charId*0x18, 0xE8, 0x18, 0x18)
      *   0x4D306F: jmp 0x4D301C (back to increment)
      */
+    s_hudAnchor = HUD_LEFT;
     if (g_raceSubMode == 2) {
         Player *p = &((Player *)g_playerBase)[1];   /* 0x4D2FDB: ecx = 0x71C, one stride */
         for (int i = 1; i < 5; i++, p++) {
@@ -1161,6 +1210,7 @@ void DrawTimerAndStatus(int vpIndex)
      * → LOSE). jle not taken means p1.rank > p0.rank (player 0 ahead → WIN).
      * Both sub-paths return before reaching the main race-end overlay below.
      */
+    s_hudAnchor = HUD_CENTER;
     if (g_raceType == 4 && g_postRaceCameraMode != 0) {
         Player *pBase = (Player *)g_playerBase;
         short p0place = pBase[0].racePosition;                  /* 0x4D308B: word @ 0x8FD550 */
@@ -1302,6 +1352,7 @@ void DrawTimerAndStatus(int vpIndex)
      * Animated ring icon + 3-digit ring count (upper-left HUD).
      * Ring icon: 16-frame animated sprite on g_tpageCharBase.
      * Ring count: player.ringCount, large digits on g_tpageParallax1, UV row 0x88. */
+    s_hudAnchor = HUD_LEFT;
     if ((g_raceType != RACE_TIMEATTACK) && (g_demoMode != DEMO_REPLAY)) { /* not shown in GP results mode */
         Player *vpPlayerRing = &((Player *)g_playerBase)[vpIndex];
         int ringCount = vpPlayerRing->ringCount;
@@ -1412,11 +1463,13 @@ void DrawTimerAndStatus(int vpIndex)
             y = 0x194;                                                   /* 0x4D36C8 */
         }
         int rank = vpPlayer->racePosition;                               /* 0x4D36D5: player+0x5A>>16 */
+        s_hudAnchor = x > 0x140 ? HUD_RIGHT : HUD_LEFT;
         DrawTexturedQuad(x, y, 0x41200000, 0x50, 0x3C,                   /* 0x4D3712 */
                          g_tpageObjects,
                          s_placementUvX[rank], s_placementUvY[rank],
                          s_placementUvW[rank], s_placementUvH[rank],
                          VERTEX_WHITE);
+        s_hudAnchor = HUD_LEFT;
     }
 
     /* Ring token counter — 0x4D3717-0x4D3806
@@ -1543,6 +1596,7 @@ subMode2_loop_exit:
 
     /* Compute center Y and screen width based on split-screen config.
      * Binary uses g_viewportIndex (split mode indicator, NOT loop counter). */
+    s_hudAnchor = HUD_CENTER;
     int centerY; /* ecx — 0x4D3936 */
     if (g_numHumans == 2 && g_viewportIndex == 0) {              /* 0x4D3940 */
         centerY = 0x3C;
@@ -1752,6 +1806,11 @@ void DrawMinimapWidget(char *vpPlayer)  /* EAX = current viewport's player point
         mapY = 0x130;
     }
 
+    if (g_numHumans == 2 && g_viewportIndex == 1)
+        s_hudAnchor = HUD_CENTER;
+    else
+        s_hudAnchor = mapX >= 0x140 ? HUD_RIGHT : HUD_LEFT;
+
     /* Phase 2: Draw minimap background (0x4D279D-0x4D27D9)
      * MAP texture loaded at (128,0) in tpage — matches binary UV. */
     DrawTexturedQuad(mapX, mapY, 0x41200000, 0xC0, 0xA0,
@@ -1835,6 +1894,8 @@ void DrawMinimapWidget(char *vpPlayer)  /* EAX = current viewport's player point
                          uvX, uvY, 16, 16, VERTEX_WHITE);
     }
 }
+
+#undef DrawTexturedQuad
 
 /* =====================================================================
  * DrawMovingPickupShadow — FUN_0045B15C — 3369 bytes
