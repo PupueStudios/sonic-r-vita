@@ -5,6 +5,7 @@ A reimplementation of Sonic R for the PlayStation Vita.
 ## Credits
 
 * FreddySP - PSVita Port
+* Standard-Republic - LiveArea Assets
 
 ## Setup
 
