@@ -11,6 +11,10 @@
 #include <errno.h>
 #include <time.h>
 
+#ifdef SONICR_VITA
+#include <psp2/kernel/rng.h>
+#endif
+
 #ifdef _WIN32
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -383,6 +387,24 @@ static void strip_headers(HttpsResponse *resp)
     resp->len = body_len;
 }
 
+#ifdef SONICR_VITA
+static int vita_seed_engine(br_ssl_engine_context *eng)
+{
+    unsigned char seed[64];
+    int i;
+
+    for (i = 0; i < 2; i++) {
+        if (sceKernelGetRandomNumber(seed, sizeof(seed)) < 0) {
+            memset(seed, 0, sizeof(seed));
+            return 0;
+        }
+        br_ssl_engine_inject_entropy(eng, seed, sizeof(seed));
+    }
+    memset(seed, 0, sizeof(seed));
+    return 1;
+}
+#endif
+
 /* ─── Core request function ─────────────────────────────────────── */
 
 static long do_request(const char *method, const char *url,
@@ -413,6 +435,7 @@ static long do_request(const char *method, const char *url,
     static unsigned char iobuf[BR_SSL_BUFSIZE_BIDI];
 
     long status = -1;
+    int ioc_ready = 0;
 
     if (is_secure) {
         uint64_t now = get_current_time();
@@ -420,12 +443,20 @@ static long do_request(const char *method, const char *url,
         br_ssl_client_init_full(&sc, &xc, TAs, TAs_NUM);
         br_ssl_engine_set_buffer(&sc.eng, iobuf, sizeof(iobuf), 1);
 
+#ifdef SONICR_VITA
+        if (!vita_seed_engine(&sc.eng)) {
+            DebugLog("net_https: entropy source failed\n");
+            goto cleanup;
+        }
+#endif
+
         if (!br_ssl_client_reset(&sc, parts.host, 0)) {
             DebugLog("net_https: SSL reset failed, err=%d\n", sc.eng.err);
             goto cleanup;
         }
 
         br_sslio_init(&ioc, &sc.eng, ssl_sock_read, &s, ssl_sock_write, &s);
+        ioc_ready = 1;
 
         uint32_t seconds = (uint32_t)(now % 86400);
         uint32_t days    = (uint32_t)(now / 86400) + 719528;
@@ -468,7 +499,7 @@ static long do_request(const char *method, const char *url,
     resp->status = (int)status;
 
 cleanup:
-    if (is_secure) br_sslio_close(&ioc);
+    if (is_secure && ioc_ready) br_sslio_close(&ioc);
     SOCK_CLOSE(s);
     return status;
 }

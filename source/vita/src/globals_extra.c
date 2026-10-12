@@ -312,7 +312,7 @@ int g_charSelDataBlock[26] = {          /* 0x00502648 */
 
 /* Network */
 int g_netSyncEstablished;
-int g_networkAvailable = 0;             /* 0x00689B00 */
+int g_networkAvailable = 1;             /* 0x00689B00 */
 
 /* Previous camera positions (for weather particles) */
 int g_prevPrevPosX;
