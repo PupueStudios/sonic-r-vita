@@ -86,7 +86,7 @@
  * them keeps the "all three reserved slots, both loops" rule intact. */
 #define PAD448_ENABLE         0
 #define PLATFORM_ICON_SIZE    32
-#define PLATFORM_ICON_COUNT   6
+#define PLATFORM_ICON_COUNT   7
 
 #define PLATFORM_ICON_DC_US   0
 #define PLATFORM_ICON_DC_JP   1
@@ -94,7 +94,8 @@
 #define PLATFORM_ICON_LINUX   3
 #define PLATFORM_ICON_MACOS   4
 #define PLATFORM_ICON_WINDOWS 5
-#define PLATFORM_ICON_UNKNOWN 6
+#define PLATFORM_ICON_VITA    6
+#define PLATFORM_ICON_UNKNOWN 7
 
 /* DC flashrom region codes (match KOS FLASHROM_REGION_*) */
 #define NET_REGION_UNKNOWN 0
@@ -131,6 +132,9 @@ static inline int net_platform_icon(const char *platform, uint8_t region)
     }
     if (platform[0] == 'm') {
         return PLATFORM_ICON_MACOS;
+    }
+    if (platform[0] == 'v') {
+        return PLATFORM_ICON_VITA;
     }
     return PLATFORM_ICON_UNKNOWN;
 }

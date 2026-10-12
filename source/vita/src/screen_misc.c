@@ -4806,7 +4806,7 @@ static void RenderSignInScreen(const uint8_t *qrBuf, int qrSize,
     }
 
     {
-        const char *prompt = "PRESS F3 FOR LAN PLAY";
+        const char *prompt = "PRESS TRIANGLE FOR LAN PLAY";
         int pixSz = 3;
         int charW = 5 * pixSz + pixSz;
         int pLen = 0;
@@ -5945,8 +5945,8 @@ render_frame:
                 }
 
                 if (ns_lobbyState == 0) {
-                    const char *l1 = "PRESS F1 TO HOST";
-                    const char *l2 = "PRESS F2 TO JOIN";
+                    const char *l1 = "PRESS CROSS TO HOST";
+                    const char *l2 = "PRESS R TO JOIN";
                     int w1 = PixTextWidth(l1, 4);
                     int w2 = PixTextWidth(l2, 4);
                     DrawPixText(l1, (640 - w1) / 2, 200, 4, 0xFFFFFFFF);
@@ -6102,9 +6102,12 @@ render_frame:
                     }
                 }
 
-                const char *hint = "UP/DOWN SELECT - ENTER JOIN - F3 LAN - ESC BACK";
+                const char *hint = "UP/DOWN SELECT - START JOIN";
+                const char *hint2 = "TRIANGLE LAN SEARCH - CIRCLE BACK";
                 int hintW = PixTextWidth(hint, 2);
-                DrawPixText(hint, (640 - hintW) / 2, 440, 2, 0xC0C0C0C0);
+                int hint2W = PixTextWidth(hint2, 2);
+                DrawPixText(hint, (640 - hintW) / 2, 424, 2, 0xC0C0C0C0);
+                DrawPixText(hint2, (640 - hint2W) / 2, 444, 2, 0xC0C0C0C0);
             }
             else if (MatchmakerHasToken() && MatchmakerGetUsername()[0]) {
                 /* In-lobby (state 2) username with platform icon. */
@@ -6796,8 +6799,8 @@ render_frame_re:
                 }
 
                 if (ns_lobbyState == 0) {
-                    const char *l1 = "PRESS F1 TO HOST";
-                    const char *l2 = "PRESS F2 TO JOIN";
+                    const char *l1 = "PRESS CROSS TO HOST";
+                    const char *l2 = "PRESS R TO JOIN";
                     int w1 = PixTextWidth(l1, 4);
                     int w2 = PixTextWidth(l2, 4);
                     DrawPixText(l1, (640 - w1) / 2, 200, 4, 0xFFFFFFFF);
