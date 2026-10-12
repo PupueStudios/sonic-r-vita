@@ -29,6 +29,7 @@
 #include "net_https.h"
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdarg.h>
 #include <time.h>
 
 /* State───────────── */
@@ -383,30 +384,39 @@ int MatchmakerListSessions(MatchmakerSessionList *out)
 
 int MatchmakerCreateSession(const char *username, int port)
 {
-    char body[512];
-    snprintf(body, sizeof(body),
-        "{\"username\": \"%s\", \"uid\": %u, \"timestamp\": %u, "
-        "\"player_count\": 1, \"protocol_id\": 0, "
-        "\"private_key\": [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,"
-                         "0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0], "
-        "\"port\": %d, \"platform\": \"%s\", \"connection\": \"%s\"}",
-        username, (unsigned)time(NULL), (unsigned)time(NULL), port,
-        MM_PLATFORM, MM_CONNECTION
-    );
+    static const char *const names[2] = { MM_PLATFORM, "unknown" };
+    int tries = (strcmp(MM_PLATFORM, "unknown") == 0) ? 1 : 2;
+    const char *user = (username && username[0]) ? username : "host";
 
-    HttpsResponse resp;
-    long status = net_https_post(
-        "https://" MATCHMAKER_DOMAIN "/api/v1/games/" GAME_SLUG "/sessions/",
-        s_authToken, body, &resp
-    );
-    DebugLog("MatchmakerCreateSession: HTTP %ld, body=%s\n", status, resp.data);
-    if (status != 200) {
-        return 0;
+    for (int t = 0; t < tries; t++) {
+        char body[512];
+        snprintf(body, sizeof(body),
+            "{\"username\": \"%s\", \"uid\": %u, \"timestamp\": %u, "
+            "\"player_count\": 1, \"protocol_id\": 0, "
+            "\"private_key\": [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,"
+                             "0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0], "
+            "\"port\": %d, \"platform\": \"%s\", \"connection\": \"%s\"}",
+            user, (unsigned)time(NULL), (unsigned)time(NULL), port,
+            names[t], MM_CONNECTION
+        );
+
+        HttpsResponse resp;
+        long status = net_https_post(
+            "https://" MATCHMAKER_DOMAIN "/api/v1/games/" GAME_SLUG "/sessions/",
+            s_authToken, body, &resp
+        );
+        DebugLog("MatchmakerCreateSession: HTTP %ld, body=%s\n", status, resp.data);
+        if (status != 200) {
+            continue;
+        }
+
+        json_get_int64(resp.data, "id", &s_sessionId);
+        DebugLog("MatchmakerCreateSession: id=%lld\n", (long long)s_sessionId);
+        if (s_sessionId > 0) {
+            return 1;
+        }
     }
-
-    json_get_int64(resp.data, "id", &s_sessionId);
-    DebugLog("MatchmakerCreateSession: id=%lld\n", (long long)s_sessionId);
-    return s_sessionId > 0;
+    return 0;
 }
 
 int MatchmakerKeepAlive(int player_count, const char *status)

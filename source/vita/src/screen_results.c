@@ -480,27 +480,4 @@ static void RenderPortraitStandings_D3D(void)
  * ===================================================================== */
 static void RenderButtonPrompt_D3D(void)
 {
-    int screenX = 0x60 - 0x28;      /* esi = 56 */
-    int screenY2 = 0xf0 + 0x28;     /* edi = 280 */
-
-    /* The MODE A/B sprite (0x48992f, uv 0xb0/0xd8 at 0x9c) is not drawn: the
-     * dispatch it fed is forced by role in main.c, so the indicator would show
-     * a setting that has no effect. Its F5 toggle is disabled to match. */
-
-    /* Additional prompt: 0x48994f-0x489990
-     * if g_resultsState > 1 AND g_netGameStarted != 0 */
-    if (g_resultsState <= 1) {
-        return;
-    }
-    if (g_netGameStarted == 0) {
-        return;
-    }
-
-    DrawTexturedQuad(screenX, screenY2,  /* EAX=56, EDX=280 */
-        0x43FA0000,
-        0x50, 0x20,                      /* width=80, height=32 */
-        g_uiTexPage + 1,                 /* [0x8f6c48]+1 reloaded */
-        ROM_BTN_TEXU, ROM_BTN_TEXV,     /* uvX=160, uvY=28 */
-        0x28, 0x10,                      /* uvW=40, uvH=16 */
-        VERTEX_WHITE); // 0xFFE0E0E0);
 }

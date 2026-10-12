@@ -249,6 +249,37 @@ static void copy_file(const char *src, const char *dst)
     fclose(in);
 }
 
+static int files_match(const char *a, const char *b)
+{
+    FILE *fa = fopen(a, "rb");
+    if (fa == NULL) {
+        return 0;
+    }
+    FILE *fb = fopen(b, "rb");
+    if (fb == NULL) {
+        fclose(fa);
+        return 0;
+    }
+
+    static unsigned char bufA[16 * 1024];
+    static unsigned char bufB[16 * 1024];
+    int same = 1;
+    for (;;) {
+        size_t na = fread(bufA, 1, sizeof(bufA), fa);
+        size_t nb = fread(bufB, 1, sizeof(bufB), fb);
+        if (na != nb || memcmp(bufA, bufB, na) != 0) {
+            same = 0;
+            break;
+        }
+        if (na == 0) {
+            break;
+        }
+    }
+    fclose(fb);
+    fclose(fa);
+    return same;
+}
+
 static void install_dir(const char *src, const char *dst)
 {
     sceIoMkdir(dst, 0777);
@@ -269,14 +300,8 @@ static void install_dir(const char *src, const char *dst)
         if (SCE_S_ISDIR(ent.d_stat.st_mode)) {
             install_dir(srcPath, dstPath);
         }
-        else {
-            FILE *existing = fopen(dstPath, "rb");
-            if (existing != NULL) {
-                fclose(existing);
-            }
-            else {
-                copy_file(srcPath, dstPath);
-            }
+        else if (!files_match(srcPath, dstPath)) {
+            copy_file(srcPath, dstPath);
         }
         memset(&ent, 0, sizeof(ent));
     }

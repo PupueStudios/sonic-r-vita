@@ -709,6 +709,9 @@ def SONICR_DC /* DC splash screen */
 #ifdef SONICR_DC
     MatchmakerSetFallbackUsername("Dreamcast");
 #endif
+#ifdef SONICR_VITA
+    MatchmakerSetFallbackUsername("Vita");
+#endif
 
     g_diDeviceReady = 1;                                   /* enable keyboard polling */
 
