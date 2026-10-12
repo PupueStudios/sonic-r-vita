@@ -7,6 +7,7 @@ A reimplementation of Sonic R for the PlayStation Vita.
 * FreddySP - PSVita Port
 * Hiro/dotfla_ - Widescreen HUD
 * Standard-Republic - LiveArea Assets
+* Juanen100 - PS Glyphs
 
 ## Setup
 
