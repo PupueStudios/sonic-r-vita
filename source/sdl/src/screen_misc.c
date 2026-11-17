@@ -46,7 +46,7 @@ void BeginFrame(void);                   /* 0x42299C */
 void UpdateFrameTimers(void);            /* 0x47FDE8 */
 void AnimateVehicleGlow(Player *p);      /* 0x4217F8 */
 void SetViewportFromConfig(int *config); /* 0x4CC0E8 */
-extern void RenderBackground(void);
+extern void D3DAppClearBackBuffer(void);
 extern void RenderLogoQuads(void);
 extern void UpdateFrameTimers(void);
 extern void AdvancePlayerAnimation(int playerIndex);
@@ -62,13 +62,13 @@ extern void R_ClearNoColorKey(int tpage);
 void EnumNetworkSessions(int flag); /* 0x487180 */
 extern void R_FreezeTexture(int tpage);
 /* Forward declarations for render/update functions */
-void RenderBackground(void);                    /* 0x435868 */
+void D3DAppClearBackBuffer(void);              /* 0x435868 */
 void ColorizeTpageHiColor(int r, int g, int b); /* 0x488310 */
 void SetupMenuTexturesD3D(void);                /* 0x438CD8 */
 void FinalizeMenuTexturesD3D(void);             /* 0x438D10 */
 void UpdateFrameTimers(void);                   /* 0x47FDE8 */
 void UpdateVertexLighting(Player *player);      /* 0x430638 */
-void PollAllInputDevices(void);                 /* 0x479248 */
+void ShuffleCollectiblePlacement(void);         /* 0x479248 — track_anim_init.c */
 void RenderCharacterOnPodium(int xOff, int yOff, int zOffset,
                              int angleC, int angleD, int angleE,
                              Player *player);               /* 0x4437FC */
@@ -96,6 +96,7 @@ static const int s_resultObjTemplate[10] = {
 };
 
 extern int g_optCurrentPage;          /* 0x0068AFCC */
+extern int g_lsPackedCursor;          /* 0x0068AFA0 — Load/Save cursor: low word = column, high word = slot index */
 
 /* =====================================================================
  * Options Menu — globals and ROM data
@@ -157,7 +158,9 @@ static int g_optMusicTestSel;              /* 0x0068AF38 — Music Test selector
 static int s_musicTestTrack = -1;
 static int __attribute__((unused)) g_optSplashState;              /* 0x0068AF70 */
 
-static short g_optKeyRemapResult[16];     /* 0x0068B040 — remap output key IDs */
+/* Ten shorts in the binary (cleared at 0x494A72); one per button a pad can
+ * report here, since every button is capturable. */
+static short g_optKeyRemapResult[JOY_MAX_BUTTONS]; /* 0x0068B040 — remap output key IDs */
 static int   s_optKeyRemapTemp[10];       /* stack temp [ebp-0x50] in binary —
                                            * snapshot of current keymap for
                                            * cancel/restore via ESC */
@@ -205,8 +208,9 @@ static const short g_remapActionBits[4][6] = {
 
 /* Per-button "already-mapped this session" flag at 0x68b02c.
  * ScanKeyRemap checks/sets this so the user can't bind the same button
- * to two different actions in one remap pass. Cleared on entry. */
-static short s_remapMappedFlag[16];
+ * to two different actions in one remap pass. Cleared on entry. Sized like
+ * g_optKeyRemapResult above. */
+static short s_remapMappedFlag[JOY_MAX_BUTTONS];
 
 /* ROM SFX test table at 0x50421A — sound IDs indexed by g_optSfxTestSel.
  * Binary reads dword at [vol*2 + 0x50421A], then sar 16 → table[vol+1]. */
@@ -258,8 +262,8 @@ void SetPlayerCharacter(int playerIndex, int charId, int raceType)
  *
  * Args: slotPtr = &g_joystickSlots[g_optKeyRemapPlayer][0] (282-byte slot).
  *   slot[0x118] (short) = button count (filled by SyncJoystickSlots from
- *   g_joystickDeviceFlags, which platform_init_gamepads writes from
- *   SDL_JoystickNumButtons).
+ *   g_joystickDeviceFlags, which the platform layer writes when it opens the
+ *   pad — every button it has, at most JOY_MAX_BUTTONS).
  */
 static void ScanKeyRemap(char *slotPtr)
 {
@@ -1185,6 +1189,11 @@ int OptionsMenuScreen(void)
     for (;;) {
         platform_pump_events();
 
+        /* Frame start for the 30fps cap at the bottom of the loop — 0x493D5E
+         * stores timeGetTime() to [0x6E9D00] here, so the wait after the flip
+         * only covers what is left of the 33ms, not a full 33ms on top. */
+        g_currentTime = timeGetTime();
+
         /* Frame timing — compute elapsed seconds for idle timeout */
         unsigned int now = timeGetTime() / 1000;
         int delta = (int)(now - lastTime);
@@ -1712,7 +1721,7 @@ int OptionsMenuScreen(void)
                             g_optKeyRemapFlag     = 1;        /* wait-for-release */
                             g_optKeyRemapPlayer   = slot;     /* 0x68b024 */
                             g_optEscGate          = 1;        /* gate2 */
-                            for (int i = 0; i < 10; i++) {
+                            for (int i = 0; i < JOY_MAX_BUTTONS; i++) { /* 0x494a5f / 0x494a72 */
                                 g_optKeyRemapResult[i] = 0;
                                 s_remapMappedFlag[i]   = 0;
                             }
@@ -1938,7 +1947,7 @@ int OptionsMenuScreen(void)
                  * have rebound, and wiping it just destroys it.
                  *
                  * That is exactly what killed the D-pad: on a Logitech Dual
-                 * Action the D-pad reports as buttons 6-9, all inside the ten
+                 * Action the D-pad reports as buttons 6-9, all inside the
                  * entries committed here and none of them among the six
                  * prompts, so every remap zeroed all four. (It survived when
                  * the pad's mode switch had the D-pad reporting as a hat
@@ -1946,16 +1955,26 @@ int OptionsMenuScreen(void)
                  * hardcoded bits, bypassing this table.)
                  *
                  * So: overwrite whatever the user actually bound, and leave a
-                 * direction entry alone when they did not touch that button. */
+                 * direction entry alone when they did not touch that button.
+                 *
+                 * The binary commits the ten entries at slot+0x104 (0x494e7d).
+                 * Buttons past those go to the port's g_joystickSlotCfgExt, so
+                 * every button the remap could capture is committed. */
                 if (g_optKeyRemapProgress >= cappedCount) {
-                    short *dst = (short *)(slotPtr + 0x104);
-                    for (int i = 0; i < 10; i++) {
+                    short *slotCfg = (short *)(slotPtr + 0x104);
+                    short *extCfg  = g_joystickSlotCfgExt[playerSlot];
+                    int commitCount = btnCount > JOY_SLOT_CFG_WORDS
+                                    ? btnCount : JOY_SLOT_CFG_WORDS;
+                    for (int i = 0; i < commitCount; i++) {
+                        short *dst = i < JOY_SLOT_CFG_WORDS
+                                   ? &slotCfg[i]
+                                   : &extCfg[i - JOY_SLOT_CFG_WORDS];
                         if (g_optKeyRemapResult[i] == 0 &&
-                            (dst[i] & PAD_DIRECTIONS) != 0)
+                            (*dst & PAD_DIRECTIONS) != 0)
                         {
                             continue;   /* untouched direction — keep it */
                         }
-                        dst[i] = g_optKeyRemapResult[i];
+                        *dst = g_optKeyRemapResult[i];
                     }
 #if 0
                     fprintf(stderr,
@@ -2014,7 +2033,7 @@ int OptionsMenuScreen(void)
         /* Quad path — the binary's D3D branch, kept for the GL backend */
         ProcessTpageStates();
         BeginFrame();
-        RenderBackground();
+        D3DAppClearBackBuffer();
         EndFrame();
 
         BeginFrame();
@@ -2075,9 +2094,8 @@ int OptionsMenuScreen(void)
         g_totalFrames2++;
         g_totalFrames++;
 
-        /* FPS cap — wait for 30fps.
-         * WaitForFrameCap uses g_currentTime as the frame start reference. */
-        g_currentTime = timeGetTime();
+        /* FPS cap — wait for 30fps (0x495383-0x4953A9), measured from the
+         * frame start taken at the top of the loop. */
         WaitForFrameCap();
     }
 }
@@ -2174,9 +2192,6 @@ static const int s_lsColumnX[3] = { 0x2F, 0x7D, 0xCB };  /* 0x502808 */
 #define LS_ROW_HEIGHT 0x30  /* 0x502814 = 48 pixels per slot row */
 #define LS_NUM_SLOTS 10
 
-/* Packed cursor state persisted across screen entries — 0x68afa0 */
-static int s_lsPackedCursor;  /* low word = column, high word = slot index */
-
 /**
  * LoadSaveScreenInit — 0x0048F724 — 424 bytes
  * Loads textures, opens all 10 save files into memory, initializes cursor.
@@ -2211,12 +2226,12 @@ static void LoadSaveScreenInit(void)
     g_fadeState = FADE_IN;                                   /* [0x901C48] = 1 */
 
     /* Restore cursor from packed state; force column to 1 (LOAD) */
-    s_lsPackedCursor = (s_lsPackedCursor & (int)0xFFFF0000) | 1;  /* 0x48F7E4-E9 */
-    s_lsColumn = s_lsPackedCursor & 0xFFFF;                 /* = 1 */
+    g_lsPackedCursor = (g_lsPackedCursor & (int)0xFFFF0000) | 1;  /* 0x48F7E4-E9 */
+    s_lsColumn = g_lsPackedCursor & 0xFFFF;                 /* = 1 */
     s_lsScrollXCur = s_lsColumnX[s_lsColumn];               /* 0x925290 */
     s_lsScrollXTgt = s_lsColumnX[s_lsColumn];               /* 0x925294 */
 
-    s_lsSlotIndex = (s_lsPackedCursor >> 16) & 0xFFFF;      /* 0x9252B4 */
+    s_lsSlotIndex = (g_lsPackedCursor >> 16) & 0xFFFF;      /* 0x9252B4 */
     int scrollY = LS_ROW_HEIGHT * s_lsSlotIndex;
     g_screenResult = 0;                                      /* [0x925418] */
     s_lsActionState = 0;                                     /* [0x9252E0] */
@@ -2507,6 +2522,11 @@ int LoadSaveScreen(void)
     for (;;) {
         platform_pump_events();
 
+        /* Frame start for the 30fps cap at the bottom of the loop — 0x48F9B3
+         * stores timeGetTime() to [0x6E9D00] here, so the wait after the flip
+         * only covers what is left of the 33ms, not a full 33ms on top. */
+        g_currentTime = timeGetTime();
+
         /* Frame timing — compute elapsed seconds for idle timeout */
         unsigned int now = timeGetTime() / 1000;
         int delta = (int)(now - lastTime);
@@ -2679,7 +2699,7 @@ int LoadSaveScreen(void)
                 g_fadeState = 2;                             /* FADE_OUT */
 
                 /* Store cursor for next entry */
-                s_lsPackedCursor = s_lsColumn |
+                g_lsPackedCursor = s_lsColumn |
                                    (s_lsSlotIndex << 16);    /* 0x48FDB4 */
             }
 
@@ -2750,7 +2770,7 @@ int LoadSaveScreen(void)
         /* D3D/GL Rendering */
         ProcessTpageStates();                                     /* 0x4901B0 */
         BeginFrame();                                        /* 0x4901B5 */
-        RenderBackground();                                  /* 0x435868 */
+        D3DAppClearBackBuffer();                            /* 0x435868 */
         EndFrame();
 
         /* 0x4901DD `cmp esi, [0x901c44]` / `jle` — esi is 0 for the whole
@@ -2878,8 +2898,8 @@ int LoadSaveScreen(void)
         g_totalFrames2++;                                    /* [0x8FB690] */
         g_totalFrames++;                                     /* [0x8FB68C] */
 
-        /* FPS cap */
-        g_currentTime = timeGetTime();
+        /* FPS cap — 0x4904D8-0x4904FE, measured from the frame start taken at
+         * the top of the loop. */
         WaitForFrameCap();
     }
 }
@@ -3312,7 +3332,7 @@ render:
         /*  background */
         ProcessTpageStates();
         BeginFrame();
-        RenderBackground();
+        D3DAppClearBackBuffer();
         EndFrame();
 
         /* main content */
@@ -3889,7 +3909,7 @@ static int ShowCreditsSlide(int pageIndex)                       /* 0x4DB014 */
         ProcessTpageStates();                                        /* 0x4DB210 */
         BeginFrame();                                           /* 0x4DB215: 0x42299C */
         SetViewportFromConfig(g_viewportArray + 5 * 21);        /* 0x4DB21A: EAX = 0x8FB50C */
-        RenderBackground();                                     /* 0x4DB226: EAX = 1 (ebx) */
+        D3DAppClearBackBuffer();                               /* 0x4DB226: EAX = 1 (ebx) */
         EndFrame();                                             /* 0x4DB22B: 0x422BA0 */
 
         SetViewportFromConfig(g_viewportArray + 4 * 21);        /* 0x4DB230: EAX = 0x8FB4B8 */
@@ -4144,7 +4164,7 @@ static int RunCreditsStep(int step)                              /* 0x4DB2C8 */
         /* Pass 1: background */
         BeginFrame();
         SetViewportFromConfig(g_viewportArray + 5 * 21);
-        RenderBackground();
+        D3DAppClearBackBuffer();
         EndFrame();
 
         /* Pass 2: fade + content */
@@ -4329,6 +4349,7 @@ extern int g_screenFPS;                 /* 0x6E9CDC */
 /* g_netProviderChoice is g_stateBlock92528C[0] — aliased in sonicr_globals.h */
 
 static void DrawPixText(const char *s, int x, int y, int pixSz, uint32_t color);
+static int PixTextWidth(const char *s, int pixSz);
 
 /* On-screen matchmaker debug overlay */
 #define NET_DBG_LINES 6
@@ -4603,6 +4624,45 @@ static int s_pickerCursor = 0;
 static int s_pickerRefreshFrame = 0;
 static unsigned char s_pickerLastInput = 0xFF;
 static int s_pickerPrevState = -1;
+
+/* Join retry state for the lobby screens (#7): whether a join is still
+ * waiting on the host, and until when to say the last attempt failed. */
+static int   s_joinWaiting = 0;
+static DWORD s_joinFailedUntilMs = 0;
+
+/* Run once per lobby frame on both lobby screens: keep asking the host for a
+ * slot, and if it never answers, drop the connection and go back to the
+ * host/join choice instead of sitting in an empty lobby. */
+static void LobbyJoinTick(void)
+{
+    int joinState = NetJoinRetryTick();
+    s_joinWaiting = (joinState > 0);
+    if (joinState < 0) {
+        DebugLog("Join: no answer from host, giving up\n");
+        NetDbgPush("JOIN TIMED OUT");
+        CloseDirectPlaySession();
+        PlaySoundEffect(0, 0, 0);
+        ns_lobbyState = 0;
+        ns_setupMode = 0;
+        s_joinFailedUntilMs = timeGetTime() + 4000;
+    }
+}
+
+/* Lobby overlay lines for the join retry: "JOINING..." while waiting, and
+ * the failure notice on the host/join screen for a few seconds after. */
+static void DrawLobbyJoinStatus(void)
+{
+    if (ns_lobbyState == 2 && s_joinWaiting) {
+        const char *msg = "JOINING...";
+        int w = PixTextWidth(msg, 3);
+        DrawPixText(msg, (640 - w) / 2, 220, 3, 0xFFFFFFFF);
+    }
+    if (ns_lobbyState == 0 && (int)(s_joinFailedUntilMs - timeGetTime()) > 0) {
+        const char *msg = "COULD NOT JOIN - HOST DID NOT ANSWER";
+        int w = PixTextWidth(msg, 3);
+        DrawPixText(msg, (640 - w) / 2, 320, 3, 0xFFFFFFFF);
+    }
+}
 
 /* Convert a C string to the in-game-font glyph-ID array.
  * Mapping: a-z/A-Z → 0..25, 0-9 → 26..35.  Other chars are skipped.
@@ -4998,7 +5058,7 @@ int NetworkScreen(void)
                     /* Render */
                     ProcessTpageStates();
                     BeginFrame();
-                    RenderBackground();
+                    D3DAppClearBackBuffer();
                     EndFrame();
 
                     if (g_fadeLevel < 0) {
@@ -5191,8 +5251,8 @@ int NetworkScreen(void)
     g_optMenuMaxItem = 3;                                        /* [0x925298] = 3 */
     g_renderEnabled = 1;                                      /* [0x8FB81C] = 1 */
 
-    /* Controller init + timing */
-    PollAllInputDevices();                                    /* 0x479248 */
+    /* Online balloon / item placement for the host to broadcast */
+    ShuffleCollectiblePlacement();                            /* 0x48AB3D: call 0x479248 */
     lastTickSec = timeGetTime() / 1000;                       /* 0x48AB42-4D */
 
     /* Store initial time */
@@ -5261,6 +5321,7 @@ int NetworkScreen(void)
          * are processed during the lobby. Binary's recv thread handled
          * this; our thread enqueues but the main thread must dispatch. */
         ApplyNetworkPlayerState();
+        LobbyJoinTick();                                      /* #7 */
 
         /* If fade active (g_fadeState != 0), skip to render */
         if (g_fadeState != 0) {                               /* 0x48AC33 */
@@ -5813,7 +5874,7 @@ render_frame:
             g_polyCount = 0;
             ProcessTpageStates();                                   /* 0x4323CC */
             BeginFrame();                                      /* 0x42299C */
-            RenderBackground();                                /* 0x435868 */
+            D3DAppClearBackBuffer();                          /* 0x435868 */
 
             /* Lobby contents (character podium, track/mode models, lobby
              * HUD) only render in the actual lobby (state 2).  States 0,
@@ -5887,6 +5948,8 @@ render_frame:
                     }
                 }
             }
+
+            DrawLobbyJoinStatus();                             /* #7 */
 
             /*  Mode-select prompt (state 0), join-search (state 1),
              * matchmaker session picker (state 3), and in-lobby username
@@ -6308,7 +6371,7 @@ int NetworkScreenReentry(void)
     g_optMenuMaxItem = 3;
     g_renderEnabled = 1;
 
-    PollAllInputDevices();                                    /* 0x479248 */
+    ShuffleCollectiblePlacement();                            /* 0x48AB3D: call 0x479248 */
     lastTickSec = timeGetTime() / 1000;
     g_screenBaseTime = (int)timeGetTime();
     UpdateCDPlayback(5);
@@ -6365,6 +6428,7 @@ int NetworkScreenReentry(void)
         ReadInput();
         NetSynthPadKeys();
         ApplyNetworkPlayerState();
+        LobbyJoinTick();                                      /* #7 */
 
         if (g_fadeState != 0) {
             goto render_frame_re;
@@ -6695,7 +6759,7 @@ render_frame_re:
             g_polyCount = 0;
             ProcessTpageStates();
             BeginFrame();
-            RenderBackground();
+            D3DAppClearBackBuffer();
             if (ns_lobbyState >= 2) {
                 int charId = (int)(signed short)g_menuPlayer.charId;
                 int nameY = s_netCharModelY[charId] + 0x32;
@@ -6745,6 +6809,8 @@ render_frame_re:
                     }
                 }
             }
+
+            DrawLobbyJoinStatus();                             /* #7 */
 
             /* Mode-select / search prompt for states 0 and 1; in-lobby
              * username via the original game font for state 2+. Mirrors
@@ -7493,7 +7559,7 @@ extern void SetupViewportConfig(void);
 extern void ApplyViewportGeometry(void);   /* mode render height + full rebuild */
 extern int g_glowPrevChar5, g_glowPrevChar7, g_glowPrevChar8; /* 0x4FBE48/4C/50 */
 void platform_pump_events(void);
-void RenderBackground(void);                                     /* 0x435868 */
+void D3DAppClearBackBuffer(void);                               /* 0x435868 */
 void RelocateModelVertices(int *arr, int count, int newBase,
                            int oldBase, int fileBase);           /* 0x421790 */
 void LoadCharacterGouraudTables(void);                           /* 0x476750 */
@@ -7988,11 +8054,7 @@ int ResultsScreen(int screenType)
             g_polyCount = 0;
             ProcessTpageStates();
             BeginFrame();
-
-            /* Wavy tinted background — binary composites via software renderer;
-             * GL port: use RenderBackground which draws the ColorizeTpageHiColor-
-             * tinted g_uiTexPage with sine wobble, matching other menu screens. */
-            RenderBackground();
+            D3DAppClearBackBuffer();                           /* 0x4c80dc */
 
             /* NOTE: the binary's Path-A "3D podium scene" call at 0x4c7e3b
              * (FUN_004671b8) is the *software* renderer's env-map model function.

@@ -449,10 +449,26 @@ void MatchmakerClearSession(void)
 
 /* UPnP───────────── */
 
-#if defined(SONICR_DC) || defined(SONICR_VITA)
+#if defined(SONICR_DC)
 
 int  UpnpOpenPort(int port)  { (void)port; return 0; }
 void UpnpClosePort(int port) { (void)port; }
+
+#elif defined(SONICR_VITA)
+
+#include "net_upnp.h"
+
+int UpnpOpenPort(int port)
+{
+    int ok = net_upnp_open_port(port);
+    DebugLog("UPnP: open port %d %s\n", port, ok ? "OK" : "FAILED");
+    return ok;
+}
+
+void UpnpClosePort(int port)
+{
+    net_upnp_close_port(port);
+}
 
 #else /* desktop: miniupnpc */
 

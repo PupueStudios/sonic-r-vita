@@ -133,6 +133,12 @@ extern int g_portraitTextBuffer[];          /* 0x0068a6f0 */
  * by UpdateNetworkSync(g_netGameInfoDest, 0x30). [11] carries the MODE A/B bit
  * in its byte 2 (0x0068a8ca) — reach it through net_lobby_mode_b(). */
 extern int g_netGameInfoDest[];             /* 0x0068a89c */
+/* Collectible placement pairs, 17 shorts at bytes 0x0C..0x2D of that payload
+ * (0x0068a8a8). Low byte indexes the track's collectible positions, high byte
+ * the item positions. The host fills them (ShuffleCollectiblePlacement,
+ * 0x479248) and the broadcast carries them to every client; InitItems_MP reads
+ * them. Must stay inside g_netGameInfoDest or clients never receive them. */
+#define g_collectiblePlacement ((unsigned short *)((char *)g_netGameInfoDest + 0x0C))
 extern short g_netTrackIndex;               /* 0x0068a8a0 */
 extern short g_netRaceSubModeIndex;         /* 0x0068a8a2 */
 extern int g_netWeatherType;                /* 0x0068a8a4 */
@@ -752,8 +758,7 @@ extern int          g_stateBlock92528C[151]; /* 0x0092528C */
 #define g_animState338      g_stateBlock92528C[43]   /* 0x925338 */
 #define g_animState33C      g_stateBlock92528C[44]   /* 0x92533C */
 
-/* [59] and [99] — screen plumbing */
-#define g_prevNumViewports  g_stateBlock92528C[59]   /* 0x925378 — numViewports saved across screens */
+/* [99] — screen plumbing */
 #define g_screenResult      g_stateBlock92528C[99]   /* 0x925418 — value every screen function returns */
 
 /* [128]-[150] 0x92548C-0x9254E4 — above the track-init clear.
@@ -935,6 +940,8 @@ extern int g_vpClipRight10;
 extern int g_vpClipLeft16;
 extern int g_vpClipRight16;
 extern short g_joystickConfigWords[];          /* 0x675404 */
+#include "gamepad_buttons.h"                   /* JOY_SLOT_EXT_WORDS */
+extern short g_joystickSlotCfgExt[4][JOY_SLOT_EXT_WORDS]; /* port: bindings past slot+0x104's ten */
 extern int g_diDeviceReady;          /* 0x675c2c */
 extern unsigned short g_taGhostSource[];          /* 0x91498c */
 extern unsigned short *g_p1JoystickPtr;          /* 0x8fd6f0 */
@@ -964,6 +971,7 @@ extern int g_replayLapCount;          /* 0x008fb8d4 */
 extern int g_replayPlacement;          /* 0x008fb8d8 */
 extern int g_charUnlockSource[];          /* 0x006d981c */
 extern int g_superSonicSeed;          /* 0x0068af98 */
+extern int g_prevNumViewports;          /* 0x0068af74 */
 extern int g_dpLobbyObject;          /* 0x0068ac6c */
 extern int g_splashPrevState;          /* 0x0068af6c */
 extern int g_nextScreenId;          /* 0x0068af9c */

@@ -560,7 +560,7 @@ void RenderHUD(void)
     R_SetTileClipFullScreen();
 #endif
 
-    RenderBackground();
+    D3DAppClearBackBuffer();
 
     /* Per-viewport rendering */
     unsigned int endVp = startViewport + viewportCount;

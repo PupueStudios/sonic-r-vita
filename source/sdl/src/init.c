@@ -32,6 +32,21 @@ extern uint32_t g_ringSpawnStorage[], g_splineWaypointStorage[];
 extern char g_polygonStorage[];
 extern char g_joystickSlots[][282];
 
+/* Menu / character-select state seeded by LoadGameState */
+extern int g_charSelectIndex[];         /* 0x0068AF84 */
+extern int g_charSelection[];           /* 0x0068AFEC */
+extern int g_lastMenuSelection;         /* 0x0068AF78 */
+extern int g_lastTimeAttackSelection;   /* 0x0068AF7C */
+extern int g_lastMultiSelection;        /* 0x0068AF80 */
+extern int g_lastCourseSelection;       /* 0x0068AF94 */
+extern int g_lsPackedCursor;            /* 0x0068AFA0 */
+extern int g_rankPagePersist;           /* 0x0068AFA4 */
+extern int g_rankCursorPersist;         /* 0x0068AFA8 */
+extern int g_netSavedButtonByte;        /* 0x0068AFAC */
+extern int g_netSavedCharId;            /* 0x0068AFE0 */
+extern int g_netSavedTrackIdx;          /* 0x0068AFE4 */
+extern int g_netSavedModeIdx;           /* 0x0068AFE8 */
+
 /* Display configuration externs */
 extern int g_dispClipRight;     /* 0x006E9878 */
 extern int g_dispClipBottom;    /* 0x006E987C */
@@ -245,12 +260,43 @@ void LoadGameState(void)
     /* Binary calls 0x4D1040 here — sound buffer offset table init */
     InitSoundOffsetTables();
 
-    g_trackId = TRACK_RESORT_ISLAND;
-    g_raceType = 0;
-    g_raceSubMode = SUBMODE_NORMAL;
-    g_demoMode = DEMO_NONE;
-    ResetDemoCycle();                 /* binary 0x4cda63: g_demoCycleIndex = -1 → attract plays island.dem first */
-    g_ghostDataExists = 0;
+    /* Menu, character-select and replay defaults — 0x4CD99D-0x4CDA7D.
+     * 0x4CDA6B (g_cdAvailable = 0) and the CD calls after this block
+     * (0x4D0C8C drive scan, 0x4D0F4C FindSonicRCD) are not run here: the port
+     * sets CD state in FindSonicRCD, called from the title and results screens. */
+    g_charSelectIndex[1] = 1;               /* 0x4CD99D */
+    g_charSelection[1] = 1;                 /* 0x4CD9A3 */
+    g_prevNumViewports = 1;                 /* 0x4CD9AB */
+    g_superSonicSeed = 0;                   /* 0x4CD9B1 */
+    g_lastCourseSelection = 0;              /* 0x4CD9B7 */
+    g_lastMultiSelection = 0;               /* 0x4CD9BD */
+    g_lastTimeAttackSelection = 0;          /* 0x4CD9C3 */
+    g_lastMenuSelection = 0;                /* 0x4CD9C9 */
+    g_lsPackedCursor = 0;                   /* 0x4CD9CF */
+    g_charSelectIndex[0] = 0;               /* 0x4CD9D5 */
+    g_charSelectIndex[2] = 2;               /* 0x4CD9DB */
+    g_charSelection[0] = 0;                 /* 0x4CD9E0 */
+    g_charSelection[2] = 2;                 /* 0x4CD9E6 */
+    g_rankCursorPersist = 0;                /* 0x4CD9EB */
+    g_rankPagePersist = 0;                  /* 0x4CD9F1 */
+    g_netSavedModeIdx = 0;                  /* 0x4CD9F7 */
+    g_netSavedTrackIdx = 0;                 /* 0x4CD9FD */
+    g_netSavedCharId = 0;                   /* 0x4CDA03 */
+    g_netSavedButtonByte = 0;               /* 0x4CDA09 */
+    g_demoMode = DEMO_NONE;                 /* 0x4CDA0F */
+    g_replayCharIds[0] = 0;                 /* 0x4CDA15 */
+    g_replayCharIds[2] = 2;                 /* 0x4CDA1B */
+    g_nextScreenId = 3;                     /* 0x4CDA2F */
+    g_charSelectIndex[3] = 3;               /* 0x4CDA37 */
+    g_replayCharIds[1] = 1;                 /* 0x4CDA3D */
+    g_replayCharIds[4] = 4;                 /* 0x4CDA43 */
+    g_trackId = TRACK_RESORT_ISLAND;        /* 0x4CDA48 */
+    g_charSelection[3] = 3;                 /* 0x4CDA57 */
+    g_replayCharIds[3] = 3;                 /* 0x4CDA5D */
+    ResetDemoCycle();                       /* 0x4CDA63: g_demoCycleIndex = -1 → attract plays island.dem first */
+    g_ghostDataExists = 0;                  /* 0x4CDA71 */
+    g_raceType = 0;                         /* 0x4CDA77 */
+    g_raceSubMode = SUBMODE_NORMAL;         /* 0x4CDA7D */
     g_weatherType = WEATHER_CLEAR;
     BuildGridUVTable();
     g_raceSpeedMult = 0x1E;
@@ -801,9 +847,9 @@ void SetupViewportConfig(void)
  * driver indices, where this layout will be wrong and the user remaps via
  * the in-game joystick remap UI.
  *
- * Only indices below JOY_SLOT_CFG_WORDS are remappable per player; the rest
- * are shared across all four slots, which is why the two shoulders end up on
- * opposite sides of that line.
+ * Every index is a per-pad default: the first JOY_SLOT_CFG_WORDS are copied
+ * into the slot template below, as in the binary, and the rest seed
+ * g_joystickSlotCfgExt, the port's storage for bindings past those ten.
  * ===================================================================== */
 void InitJoystickConfig(void)
 {
@@ -834,21 +880,15 @@ void InitJoystickConfig(void)
      * Y camera, shoulders brake — so muscle memory carries between the two
      * ports. Both the shoulder buttons and the analog triggers brake, since
      * which of the two a player reaches for is a matter of habit. */
-    for (int k = 0; k < 32; k++) {
+    for (int k = 0; k < JOY_MAX_BUTTONS; k++) {
         g_joystickConfigWords[k] = 0;
     }
-    /* Remappable per player (below JOY_SLOT_CFG_WORDS). */
     g_joystickConfigWords[GCBTN_A]             = PAD_JUMP;   /* Jump (ACTION) */
     g_joystickConfigWords[GCBTN_B]             = PAD_ACCEL;  /* Accel; doubles as menu cancel */
     g_joystickConfigWords[GCBTN_X]             = PAD_ACCEL;  /* Accel — as on DC */
     g_joystickConfigWords[GCBTN_Y]             = PAD_CAMERA; /* Camera (3 height/zoom levels) */
     g_joystickConfigWords[GCBTN_START]         = PAD_START;  /* Start / Pause */
     g_joystickConfigWords[GCBTN_LEFTSHOULDER]  = PAD_DRIFTL; /* L.BRAKE */
-    /* Left unbound: GCBTN_BACK (PAD_ACCEL is already the cancel bit on B, and
-     * binding it here would make Back accelerate mid-race), GCBTN_GUIDE, and
-     * both stick clicks. */
-
-    /* Shared across all four slots — past the per-slot config's capacity. */
     g_joystickConfigWords[GCBTN_RIGHTSHOULDER] = PAD_DRIFTR; /* R.BRAKE */
     g_joystickConfigWords[GCBTN_DPAD_UP]       = PAD_UP;
     g_joystickConfigWords[GCBTN_DPAD_DOWN]     = PAD_DOWN;
@@ -856,11 +896,18 @@ void InitJoystickConfig(void)
     g_joystickConfigWords[GCBTN_DPAD_RIGHT]    = PAD_RIGHT;
     g_joystickConfigWords[GCBTN_TRIGGER_LEFT]  = PAD_DRIFTL;
     g_joystickConfigWords[GCBTN_TRIGGER_RIGHT] = PAD_DRIFTR;
+    /* Left unbound: GCBTN_BACK (PAD_ACCEL is already the cancel bit on B, and
+     * binding it here would make Back accelerate mid-race), GCBTN_GUIDE, both
+     * stick clicks, and MISC1 / the paddles / the touchpad. */
 #endif
 
     for (int i = 0; i < 4; i++) {
         memcpy(g_joystickSlots[i], g_joystickNameBuf, 282);
         g_joystickSlotActive[i] = 0;
+        /* Port: the slot's bindings past its ten start at the defaults too, so
+         * a JOYSTICK.INF that does not carry them still gets working buttons. */
+        memcpy(g_joystickSlotCfgExt[i], &g_joystickConfigWords[JOY_SLOT_CFG_WORDS],
+               sizeof g_joystickSlotCfgExt[i]);
     }
 }
 

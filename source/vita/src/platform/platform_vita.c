@@ -26,8 +26,6 @@
 
 #define MAX_GAMEPADS         4
 #define MAX_CTRL_PORTS       5
-#define JOY_BUTTONS_PER_SLOT 80
-#define JOY_CFG_MAX          32
 #define STICK_THRESHOLD      77
 #define STICK_CENTER         128
 #define TRIGGER_THRESHOLD    64
@@ -39,8 +37,8 @@ unsigned int sceUserMainThreadStackSize = 2 * 1024 * 1024;
 unsigned char s_keystate[256];
 
 extern unsigned char g_keyPressState[320];
-extern short g_joystickConfigWords[];
 extern char g_joystickSlots[4][282];
+extern short g_joystickSlotCfgExt[4][JOY_SLOT_EXT_WORDS];
 extern char g_joystickDeviceNames[4][260];
 extern short g_joystickDeviceFlags[8];
 extern int g_initFeatureC;
@@ -123,13 +121,12 @@ static void apply_pads(const PadSlot *fresh, int freshCount)
     for (int i = 0; i < freshCount; i++) {
         s_pads[i] = fresh[i];
         publish_pad_name(i, pad_type_name(fresh[i].type));
-        g_joystickDeviceFlags[i] = (short)(GC_BUTTON_COUNT < JOY_SLOT_CFG_WORDS
-                                           ? GC_BUTTON_COUNT : JOY_SLOT_CFG_WORDS);
+        g_joystickDeviceFlags[i] = (short)GC_BUTTON_COUNT;
     }
     for (int i = freshCount; i < MAX_GAMEPADS; i++) {
         s_pads[i].port = -1;
         s_pads[i].type = 0;
-        memset(&g_keyPressState[i * JOY_BUTTONS_PER_SLOT], 0, JOY_BUTTONS_PER_SLOT);
+        memset(&g_keyPressState[i * JOY_MAX_BUTTONS], 0, JOY_MAX_BUTTONS);
     }
     s_padCount = freshCount;
     g_initFeatureC = s_padCount;
@@ -365,7 +362,7 @@ int platform_poll_gamepads(unsigned short *joySlotState, int maxSlots)
     }
 
     for (int i = 0; i < count; i++) {
-        unsigned char *pressBase = &g_keyPressState[i * JOY_BUTTONS_PER_SLOT];
+        unsigned char *pressBase = &g_keyPressState[i * JOY_MAX_BUTTONS];
         SceCtrlData pad;
         unsigned short bits = 0;
 
@@ -394,14 +391,12 @@ int platform_poll_gamepads(unsigned short *joySlotState, int maxSlots)
             short cfg;
             if (b < JOY_SLOT_CFG_WORDS) {
                 cfg = slotCfg[b];
-            } else if (b < JOY_CFG_MAX) {
-                cfg = g_joystickConfigWords[b];
             } else {
-                cfg = 0;
+                cfg = g_joystickSlotCfgExt[i][b - JOY_SLOT_CFG_WORDS];
             }
             bits |= (unsigned short)cfg;
         }
-        for (int b = GC_BUTTON_COUNT; b < JOY_BUTTONS_PER_SLOT; b++) {
+        for (int b = GC_BUTTON_COUNT; b < JOY_MAX_BUTTONS; b++) {
             pressBase[b] = 0x00;
         }
 
@@ -412,7 +407,7 @@ int platform_poll_gamepads(unsigned short *joySlotState, int maxSlots)
         joySlotState[i] = 0;
     }
     for (int i = count; i < MAX_GAMEPADS; i++) {
-        memset(&g_keyPressState[i * JOY_BUTTONS_PER_SLOT], 0, JOY_BUTTONS_PER_SLOT);
+        memset(&g_keyPressState[i * JOY_MAX_BUTTONS], 0, JOY_MAX_BUTTONS);
     }
 
     return count;

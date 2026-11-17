@@ -480,4 +480,14 @@ static void RenderPortraitStandings_D3D(void)
  * ===================================================================== */
 static void RenderButtonPrompt_D3D(void)
 {
+    /* Neither of this function's sprites is drawn.
+     *
+     * The MODE A/B sprite (0x48992f, uv 0xb0/0xd8 at 0x9c): the dispatch it
+     * fed is forced by role in main.c, so the indicator would show a setting
+     * that has no effect. Its F5 toggle is disabled to match.
+     *
+     * The F5 button beside it (0x48994f-0x489990: drawn for the host once
+     * g_resultsState > 1, 80x32 at (56, 280) from uv ROM_BTN_TEXU/TEXV =
+     * 160/28 on g_uiTexPage + 1): it labels that same disabled toggle, so it
+     * would only invite the question of what F5 does. */
 }
