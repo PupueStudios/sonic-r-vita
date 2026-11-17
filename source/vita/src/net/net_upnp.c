@@ -11,7 +11,10 @@
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <unistd.h>
+#include <pthread.h>
 #include <psp2/net/netctl.h>
+#include <psp2/kernel/threadmgr.h>
+#include <psp2/kernel/processmgr.h>
 
 extern void DebugLog(const char *fmt, ...);
 
@@ -30,6 +33,17 @@ static char s_controlUrl[512];
 static char s_serviceType[128];
 static int  s_portOpen = 0;
 static int  s_openedPort = 0;
+
+static pthread_mutex_t s_lock = PTHREAD_MUTEX_INITIALIZER;
+static volatile int s_status = NET_UPNP_IDLE;
+static int s_busy = 0;
+static int s_pendingOpen = 0;
+static int s_pendingClose = 0;
+
+static unsigned long long now_us(void)
+{
+    return (unsigned long long)sceKernelGetProcessTimeWide();
+}
 
 static int parse_http_url(const char *url, UrlParts *out)
 {
@@ -128,7 +142,8 @@ static int send_all(int s, const char *data, int len)
 static int recv_all(int s, char *buf, int bufsize)
 {
     int len = 0;
-    while (len < bufsize - 1) {
+    unsigned long long deadline = now_us() + UPNP_TCP_TIMEOUT_US * 2ULL;
+    while (len < bufsize - 1 && now_us() < deadline) {
         int n = (int)recv(s, buf + len, bufsize - len - 1, 0);
         if (n <= 0) break;
         len += n;
@@ -205,7 +220,8 @@ static int ssdp_find_location(char *location, int maxlen)
     local.sin_port = 0;
     bind(s, (struct sockaddr *)&local, sizeof(local));
 
-    set_timeouts(s, 500000);
+    int one = 1;
+    setsockopt(s, SOL_SOCKET, SO_NONBLOCK, &one, sizeof(one));
 
     struct sockaddr_in addr;
     memset(&addr, 0, sizeof(addr));
@@ -236,13 +252,13 @@ static int ssdp_find_location(char *location, int maxlen)
     }
 
     int found = 0;
-    int waited = 0;
     int packets = 0;
-    while (!found && waited < UPNP_SSDP_WAIT_US && packets < 32) {
+    unsigned long long deadline = now_us() + UPNP_SSDP_WAIT_US;
+    while (!found && packets < 32 && now_us() < deadline) {
         char buf[2048];
         int n = (int)recv(s, buf, sizeof(buf) - 1, 0);
         if (n <= 0) {
-            waited += 500000;
+            sceKernelDelayThread(20000);
             continue;
         }
         buf[n] = '\0';
@@ -440,7 +456,7 @@ static void delete_mapping(int port)
     soap_request("DeletePortMapping", args, resp, sizeof(resp));
 }
 
-int net_upnp_open_port(int port)
+static int upnp_open_sync(int port)
 {
     static char resp[UPNP_RESP_SIZE];
     char local_ip[64];
@@ -481,7 +497,7 @@ int net_upnp_open_port(int port)
     return 0;
 }
 
-void net_upnp_close_port(int port)
+static void upnp_close_sync(int port)
 {
     if (!s_portOpen || s_openedPort != port) return;
     delete_mapping(port);
@@ -490,9 +506,96 @@ void net_upnp_close_port(int port)
     DebugLog("UPnP: port %d closed\n", port);
 }
 
+static void *upnp_worker(void *arg)
+{
+    (void)arg;
+    for (;;) {
+        int openPort = 0;
+        int closePort = 0;
+
+        pthread_mutex_lock(&s_lock);
+        if (s_pendingOpen) {
+            openPort = s_pendingOpen;
+            s_pendingOpen = 0;
+        } else if (s_pendingClose) {
+            closePort = s_pendingClose;
+            s_pendingClose = 0;
+        } else {
+            s_busy = 0;
+            pthread_mutex_unlock(&s_lock);
+            break;
+        }
+        pthread_mutex_unlock(&s_lock);
+
+        if (openPort) {
+            s_status = NET_UPNP_WORKING;
+            s_status = upnp_open_sync(openPort) ? NET_UPNP_OK : NET_UPNP_FAILED;
+        } else {
+            upnp_close_sync(closePort);
+            s_status = NET_UPNP_IDLE;
+        }
+    }
+    return NULL;
+}
+
+static int start_worker_locked(void)
+{
+    if (s_busy) {
+        return 1;
+    }
+    pthread_attr_t attr;
+    pthread_attr_init(&attr);
+    pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+    pthread_attr_setstacksize(&attr, 128 * 1024);
+    pthread_t th;
+    int rc = pthread_create(&th, &attr, upnp_worker, NULL);
+    pthread_attr_destroy(&attr);
+    if (rc != 0) {
+        DebugLog("UPnP: worker thread failed (%d)\n", rc);
+        return 0;
+    }
+    s_busy = 1;
+    return 1;
+}
+
+int net_upnp_open_port(int port)
+{
+    int ok;
+    pthread_mutex_lock(&s_lock);
+    s_pendingClose = 0;
+    s_pendingOpen = port;
+    s_status = NET_UPNP_WORKING;
+    ok = start_worker_locked();
+    if (!ok) {
+        s_pendingOpen = 0;
+        s_status = NET_UPNP_FAILED;
+    }
+    pthread_mutex_unlock(&s_lock);
+    return ok;
+}
+
+void net_upnp_close_port(int port)
+{
+    pthread_mutex_lock(&s_lock);
+    if (s_pendingOpen == port) {
+        s_pendingOpen = 0;
+    }
+    if (s_portOpen || s_busy) {
+        s_pendingClose = port;
+        start_worker_locked();
+    }
+    pthread_mutex_unlock(&s_lock);
+}
+
+int net_upnp_status(void)
+{
+    return s_status;
+}
+
 #else
 
 int  net_upnp_open_port(int port)  { (void)port; return 0; }
 void net_upnp_close_port(int port) { (void)port; }
+int  net_upnp_status(void)         { return NET_UPNP_IDLE; }
 
 #endif

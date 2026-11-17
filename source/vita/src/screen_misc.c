@@ -8,6 +8,9 @@
 #include "sonicr_types.h"
 #include "sonicr_globals.h"
 #include "sonicr_functions.h"
+#ifdef SONICR_VITA
+#include "net/net_upnp.h"
+#endif
 #include "sonicr_paths.h"
 #include "endian_util.h"
 #include "platform.h"
@@ -5445,7 +5448,7 @@ int NetworkScreen(void)
                     ns_lobbyState = 2;                         /* skip state 1 */
                     if (MatchmakerHasToken()) {
                         int upOk = UpnpOpenPort(NET_PORT_DEFAULT);
-                        NetDbgPush("UPNP %s", upOk ? "OK" : "FAIL");
+                        NetDbgPush("UPNP %s", upOk ? "STARTED" : "FAIL");
                         int csOk = MatchmakerCreateSession(MatchmakerGetUsername(), NET_PORT_DEFAULT);
                         NetDbgPush("CREATE %s ID %lld USER %s",
                                    csOk ? "OK" : "FAIL",
@@ -5846,6 +5849,21 @@ skip_text_entry:
             if ((g_totalFrames & 0x3F) == 0x20) {              /* 0x48B670: every 32 frames */
                 UpdateNetworkSync(g_netGameInfoDest, 0x30);   /* 0x48B687 */
             }
+#ifdef SONICR_VITA
+            {
+                static int s_upnpShown = NET_UPNP_IDLE;
+                int upnpNow = net_upnp_status();
+                if (upnpNow != s_upnpShown) {
+                    s_upnpShown = upnpNow;
+                    if (upnpNow == NET_UPNP_OK) {
+                        NetDbgPush("UPNP OK");
+                    }
+                    else if (upnpNow == NET_UPNP_FAILED) {
+                        NetDbgPush("UPNP FAIL");
+                    }
+                }
+            }
+#endif
             if ((g_totalFrames % 900) == 0 && MatchmakerGetSessionId() >= 0) {
                 int kaStatus = MatchmakerKeepAlive(g_netPlayerCount, "LOBBY");
                 NetDbgPush("KEEPALIVE HTTP %d SID %lld",

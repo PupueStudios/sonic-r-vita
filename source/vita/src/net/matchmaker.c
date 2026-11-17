@@ -461,7 +461,7 @@ void UpnpClosePort(int port) { (void)port; }
 int UpnpOpenPort(int port)
 {
     int ok = net_upnp_open_port(port);
-    DebugLog("UPnP: open port %d %s\n", port, ok ? "OK" : "FAILED");
+    DebugLog("UPnP: open port %d %s\n", port, ok ? "STARTED" : "FAILED");
     return ok;
 }
 
